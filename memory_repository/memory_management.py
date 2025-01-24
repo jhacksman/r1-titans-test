@@ -207,7 +207,9 @@ def surprise_score(current_state: np.ndarray,
 def forget_stale_entries(memory_store: MemoryStore, 
                         age_threshold: float = 3600,
                         max_memories: int = 10000,
-                        min_surprise_score: float = 0.3) -> int:
+                        min_surprise_score: float = 0.3,
+                        rebuild_index: bool = True,
+                        verbose: bool = True) -> int:
     """Remove old or excess memories from the store.
     
     Uses three criteria in order:
@@ -215,28 +217,63 @@ def forget_stale_entries(memory_store: MemoryStore,
     2. Surprise-based pruning: Remove entries with low surprise scores
     3. Capacity-based pruning: If still over max_memories, remove oldest entries
     
+    The pruning process is optimized to:
+    - Minimize memory allocations during pruning
+    - Batch process removals for efficiency
+    - Optionally defer index rebuilding for bulk operations
+    
     Args:
         memory_store: The MemoryStore instance to prune
         age_threshold: Maximum age in seconds before memory is considered stale
         max_memories: Maximum number of memories to keep
         min_surprise_score: Minimum surprise score to keep (if available)
+        rebuild_index: Whether to rebuild Annoy index after pruning
+        verbose: Whether to print debug information
         
     Returns:
         int: Number of memories removed
+        
+    Raises:
+        ValueError: If max_memories < 0 or age_threshold < 0
+        RuntimeError: If memory store access fails
     """
+    # Input validation
+    if max_memories < 0:
+        raise ValueError("max_memories must be non-negative")
+    if age_threshold < 0:
+        raise ValueError("age_threshold must be non-negative")
+        
+    if verbose:
+        print(f"\nStarting forget_stale_entries:")
+        print(f"- Initial memory count: {len(memory_store.storage)}")
+        print(f"- Age threshold: {age_threshold}s")
+        print(f"- Max memories: {max_memories}")
+        print(f"- Min surprise score: {min_surprise_score}")
+    
     current_time = time.time()
     to_remove: List[str] = []
     
     # First pass: Remove entries older than threshold
-    for key in memory_store.storage.keys():
-        timestamp = memory_store.get_timestamp(key)
+    if verbose:
+        print("\nChecking age-based pruning...")
+        
+    storage_keys = list(memory_store.storage.keys())  # Create list to avoid modification during iteration
+    for key in storage_keys:
+        data = memory_store.storage[key]
+        timestamp = data.get('timestamp')  # Get timestamp directly from storage
         if timestamp and (current_time - timestamp) > age_threshold:
             to_remove.append(key)
+            
+    if verbose:
+        print(f"- Found {len(to_remove)} entries older than threshold")
     
     # Second pass: Remove entries with low surprise scores
+    if verbose:
+        print("\nChecking surprise-based pruning...")
+        
     remaining_entries = [
         (k, memory_store.storage[k]) 
-        for k in memory_store.storage.keys() 
+        for k in storage_keys 
         if k not in to_remove
     ]
     
@@ -257,23 +294,66 @@ def forget_stale_entries(memory_store: MemoryStore,
         excess = len(memory_store.storage) - len(to_remove) - max_memories
         to_remove.extend([k for k, _ in entries[:excess]])
     
-    # Remove all identified entries
+    if verbose:
+        print("\nProcessing removals...")
+    
+    # Process removals in a single pass with a set for O(1) lookups
+    current_keys = set(memory_store.storage.keys())
     removed_count = 0
+    
     for key in to_remove:
+        if key in current_keys:
+            try:
+                del memory_store.storage[key]
+                removed_count += 1
+                current_keys.remove(key)
+            except (KeyError, RuntimeError) as e:
+                if verbose:
+                    print(f"Error removing key {key}: {str(e)}")
+                continue
+    
+    if verbose:
+        print(f"- Removed {removed_count} entries")
+        print(f"- Remaining entries: {len(memory_store.storage)}")
+    
+    # Only rebuild index if needed and requested
+    if removed_count > 0 and rebuild_index:
+        if verbose:
+            print("\nRebuilding index...")
+            
         try:
-            del memory_store.storage[key]
-            removed_count += 1
-        except KeyError:
-            continue  # Skip if already removed
+            # Create new index
+            new_index = AnnoyIndex(memory_store.vector_dim, 'angular')
+            
+            # Add remaining items
+            for key, data in memory_store.storage.items():
+                new_index.add_item(data['index'], data['embedding'])
+            
+            if verbose:
+                print(f"- Added {len(memory_store.storage)} items to new index")
+            
+            # Build with original or fallback trees
+            try:
+                if verbose:
+                    print(f"- Building with {memory_store.n_trees} trees...")
+                new_index.build(memory_store.n_trees)
+            except RuntimeError:
+                fallback_trees = max(1, memory_store.n_trees // 2)
+                if verbose:
+                    print(f"- Falling back to {fallback_trees} trees...")
+                new_index.build(fallback_trees)
+            
+            # Only replace index after successful build
+            memory_store.index = new_index
+            
+            if verbose:
+                print("- Index rebuilt successfully")
+                
+        except Exception as e:
+            if verbose:
+                print(f"Error rebuilding index: {str(e)}")
+            raise RuntimeError(f"Failed to rebuild index: {str(e)}")
     
-    # If we removed any entries, rebuild the Annoy index
-    if removed_count > 0:
-        # Create new index with remaining items
-        memory_store.index = AnnoyIndex(memory_store.vector_dim, 'angular')
-        
-        for key, data in memory_store.storage.items():
-            memory_store.index.add_item(data['index'], data['embedding'])
-        
-        memory_store.index.build(memory_store.n_trees)
-    
+    if verbose:
+        print("\nForget operation completed")
     return removed_count

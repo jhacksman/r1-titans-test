@@ -60,8 +60,11 @@ class MemoryStore:
         key = f"mem_{self.current_index}"
         self.index.add_item(self.current_index, embedding)
         
+        # Use timestamp from metadata if provided, otherwise use current time
+        timestamp = metadata.get('timestamp', time.time()) if metadata else time.time()
+        
         self.storage[key] = {
-            'timestamp': time.time(),
+            'timestamp': timestamp,
             'embedding': embedding,
             'metadata': metadata or {},
             'index': self.current_index
@@ -74,40 +77,62 @@ class MemoryStore:
             
         return key
         
-    def build_index(self):
+    def build_index(self, verbose: bool = False):
         """Build the Annoy index. Must be called after adding items and before querying.
         
         This is an expensive operation, so if adding multiple items,
         set auto_build=False in add_memory() and call this manually after
         all items are added.
         """
-        # Create new index if current one is built
+        if verbose:
+            print("\nBuilding Annoy index...")
+            
+        # Create new index
+        new_index = AnnoyIndex(self.vector_dim, 'angular')
+        
+        if verbose:
+            print(f"- Adding {len(self.storage)} items to index")
+            
+        # Add items to new index
+        for key, data in self.storage.items():
+            new_index.add_item(data['index'], data['embedding'])
+        
+        # Try building with original number of trees
         try:
-            self.index.build(self.n_trees)
-        except Exception as e:
-            if "You can't build a built index" in str(e):
-                # Create new index and re-add all items
-                new_index = AnnoyIndex(self.vector_dim, 'angular')
-                for key, data in self.storage.items():
-                    new_index.add_item(data['index'], data['embedding'])
-                self.index = new_index
-                self.index.build(self.n_trees)
-            else:
-                raise
+            if verbose:
+                print(f"- Building with {self.n_trees} trees...")
+            new_index.build(self.n_trees)
+        except RuntimeError:
+            # If that fails, try with fewer trees
+            fallback_trees = max(1, self.n_trees // 2)
+            if verbose:
+                print(f"- Falling back to {fallback_trees} trees...")
+            new_index.build(fallback_trees)
+            
+        # Only replace index after successful build
+        self.index = new_index
+        
+        if verbose:
+            print("- Index built successfully")
         
     def batch_add_memories(self, embeddings: List[np.ndarray], 
-                         metadata: Optional[List[Dict]] = None) -> List[str]:
+                         metadata: Optional[List[Dict]] = None,
+                         verbose: bool = False) -> List[str]:
         """Add multiple memory embeddings efficiently.
         
         Args:
             embeddings: List of embeddings to store
             metadata: Optional list of metadata dicts (must match embeddings length if provided)
+            verbose: Whether to print debug information
             
         Returns:
             List of memory keys
         """
         if metadata and len(metadata) != len(embeddings):
             raise ValueError("metadata length must match embeddings length")
+            
+        if verbose:
+            print(f"\nBatch adding {len(embeddings)} memories...")
             
         keys = []
         for i, emb in enumerate(embeddings):
@@ -116,8 +141,18 @@ class MemoryStore:
             key = self.add_memory(emb, meta, auto_build=False)
             keys.append(key)
             
-        # Build index once at the end
-        self.build_index()
+            if verbose and (i + 1) % 10 == 0:
+                print(f"- Added {i + 1}/{len(embeddings)} memories")
+            
+        if verbose:
+            print("Building final index...")
+            
+        # Build index once at the end with verbose output
+        self.build_index(verbose=verbose)
+        
+        if verbose:
+            print("Batch add completed successfully")
+            
         return keys
         
     def retrieve(self, query: np.ndarray, k: int = 5) -> Tuple[list, list]:

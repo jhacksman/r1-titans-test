@@ -135,8 +135,36 @@ def test_memory_store_surprise():
         store, 
         age_threshold=float('inf'),  # Don't remove based on age
         max_memories=10,  # Don't remove based on capacity
-        min_surprise_score=0.5  # Remove entries with surprise < 0.5
+        min_surprise_score=0.5,  # Remove entries with surprise < 0.5
+        rebuild_index=True  # Test index rebuilding
     )
     
     assert removed == 5  # Should remove 5 entries with lowest surprise
     assert len(store.storage) == 5
+    
+    # Test without index rebuilding
+    store = MemoryStore(vector_dim=dim)
+    for i in range(10):
+        emb = np.random.random(dim).astype(np.float32)
+        store.add_memory(emb, metadata={'surprise_score': i/10.0})
+        
+    removed = forget_stale_entries(
+        store,
+        age_threshold=float('inf'),
+        max_memories=5,
+        min_surprise_score=0.0,  # Don't remove based on surprise
+        rebuild_index=False  # Skip index rebuilding
+    )
+    
+    assert removed == 5
+    assert len(store.storage) == 5
+    
+    # Verify index state
+    assert store.index is not None  # Index should still exist
+    assert store.index.get_n_items() > 0  # But may be stale
+    
+    # Test error handling with invalid parameters
+    with pytest.raises(ValueError):
+        forget_stale_entries(store, max_memories=-1)
+    with pytest.raises(ValueError):
+        forget_stale_entries(store, age_threshold=-1)

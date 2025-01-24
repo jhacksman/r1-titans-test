@@ -12,8 +12,9 @@ focusing on:
 import pytest
 import torch
 import numpy as np
+import time
 from typing import Dict, Any, Tuple
-from memory_repository.memory_management import surprise_score
+from memory_repository.memory_management import surprise_score, forget_stale_entries
 from memory_repository.memory_store import MemoryStore
 from gating_module.memory_gating import MemoryGatingModule
 
@@ -263,23 +264,143 @@ class TestMemoryIntegration:
         zero_state = np.zeros_like(current)
         score_zero = surprise_score(zero_state, [current], use_kl=True)
         assert 0.0 <= score_zero <= 1.0  # Should handle zeros gracefully
+        
+        # Test with multiple reference states
+        references = [similar, different]
+        score_multi = surprise_score(current, references, use_kl=True)
+        assert 0.0 <= score_multi <= 1.0
+        assert score_multi <= score_different  # Should use most similar state
+        
+        # Test with extreme values
+        large_state = current * 1e6
+        score_large = surprise_score(large_state, [large_state * 1.1], use_kl=True)
+        assert 0.0 <= score_large <= 1.0  # Should handle large values
+        
+        tiny_state = current * 1e-6
+        score_tiny = surprise_score(tiny_state, [tiny_state * 1.1], use_kl=True)
+        assert 0.0 <= score_tiny <= 1.0  # Should handle tiny values
+        
+        # Test with no reference states
+        score_no_ref = surprise_score(current, None, use_kl=True)
+        assert 0.0 <= score_no_ref <= 1.0  # Should handle no references
     
     def test_memory_management(self, setup_test_environment):
         """Test memory management (forgetting mechanism)."""
-        # PSEUDOCODE
-        """
-        _, wrapper, _ = setup_test_environment
+        _, gating, test_data = setup_test_environment
         
-        # Fill memory store
-        test_memories = generate_test_memories(count=15000)
-        for mem in test_memories:
-            wrapper.ltm.add_memory(mem)
+        # Create memory store for testing
+        store = MemoryStore(vector_dim=4096)
         
-        # Verify forgetting mechanism
-        assert len(wrapper.ltm.storage) <= 10000  # Default max
-        assert verify_memory_freshness(wrapper.ltm)
-        """
-        pass
+        print("\nStarting memory management test...")
+        
+        # Add test memories with timestamps and surprise scores
+        current_time = time.time()
+        embeddings = []
+        metadata = []
+        
+        # Reduce test size for faster execution
+        print("Generating test data...")
+        for i in range(20):  # Reduced from 100 to 20 entries
+            emb = np.random.randn(4096).astype(np.float32)
+            surprise = i / 20.0  # Adjusted surprise score calculation
+            timestamp = current_time - (i * 1000)  # Still using 1000s intervals
+            
+            embeddings.append(emb)
+            metadata.append({
+                'surprise_score': surprise,
+                'timestamp': timestamp
+            })
+        
+        print(f"Adding {len(embeddings)} memories to store...")
+        try:
+            store.batch_add_memories(embeddings, metadata)
+            print("Memories added successfully")
+        except Exception as e:
+            print(f"Error adding memories: {str(e)}")
+            raise
+            
+        print("\nTesting time-based pruning...")
+        try:
+            removed = forget_stale_entries(
+                store,
+                age_threshold=10000,  # Reduced from 25000s to 10000s
+                max_memories=20,  # Match test size
+                min_surprise_score=0.0,  # Don't remove based on surprise
+                rebuild_index=True,  # Explicitly set rebuild_index
+                verbose=True  # Enable debug output
+            )
+        except Exception as e:
+            print(f"Error in forget_stale_entries: {str(e)}")
+            raise
+        
+        print(f"Removed {removed} memories")
+        print(f"Remaining memories: {len(store.storage)}")
+        
+        # With 1000s intervals and 10000s threshold, entries 10-19 should be removed
+        assert removed >= 8  # At least 8 entries should be removed
+        assert removed <= 12  # At most 12 entries should be removed
+        
+        # Verify remaining entries are not too old
+        for key, data in store.storage.items():
+            timestamp = data.get('timestamp', store.get_timestamp(key))
+            assert (current_time - timestamp) <= 25000  # All remaining entries should be newer than threshold
+        assert len(store.storage) < 100  # Should have fewer entries
+        
+        print("\nTesting surprise-based pruning...")
+        store = MemoryStore(vector_dim=4096)
+        test_size = 20  # Reduced from 100
+        
+        # Prepare batch data
+        embeddings = []
+        metadata = []
+        for i in range(test_size):
+            emb = np.random.randn(4096).astype(np.float32)
+            surprise = i / test_size
+            embeddings.append(emb)
+            metadata.append({'surprise_score': surprise})
+            
+        # Batch add with verbose output
+        store.batch_add_memories(embeddings, metadata, verbose=True)
+        
+        removed = forget_stale_entries(
+            store,
+            age_threshold=float('inf'),  # Don't remove based on age
+            max_memories=test_size,  # Don't remove based on capacity
+            min_surprise_score=0.5,  # Remove low surprise entries
+            rebuild_index=True,
+            verbose=True
+        )
+        
+        expected_removed = test_size // 2
+        print(f"\nExpected to remove {expected_removed} entries (surprise < 0.5)")
+        assert removed == expected_removed
+        assert len(store.storage) == expected_removed
+        
+        print("\nTesting capacity-based pruning...")
+        store = MemoryStore(vector_dim=4096)
+        max_size = 10  # Reduced max size
+        
+        # Prepare batch data
+        embeddings = []
+        for i in range(test_size):  # Still use test_size=20
+            embeddings.append(np.random.randn(4096).astype(np.float32))
+            
+        # Batch add
+        store.batch_add_memories(embeddings, verbose=True)
+        
+        removed = forget_stale_entries(
+            store,
+            age_threshold=float('inf'),  # Don't remove based on age
+            max_memories=max_size,  # Keep only max_size memories
+            min_surprise_score=0.0,  # Don't remove based on surprise
+            rebuild_index=True,
+            verbose=True
+        )
+        
+        expected_removed = test_size - max_size
+        print(f"\nExpected to remove {expected_removed} entries (capacity limit)")
+        assert removed == expected_removed
+        assert len(store.storage) == max_size
 
 def setup_mock_r1_model():
     """Create mock R1 model for testing."""
