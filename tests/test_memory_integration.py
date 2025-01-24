@@ -105,41 +105,94 @@ class TestMemoryIntegration:
         pass
     
     def test_gating_mechanism(self, setup_test_environment):
-        """Test memory gating functionality."""
+        """Test memory gating functionality with comprehensive scenarios."""
         _, gating, test_data = setup_test_environment
-        
+
         # Convert numpy test data to torch tensors
         h_stm = torch.from_numpy(test_data['hidden_state']).float()
         h_ltm = torch.from_numpy(test_data['memory_state']).float()
-        
-        # Test with fixed alpha
-        fixed_gating = MemoryGatingModule(
-            hidden_dim=h_stm.shape[-1],
-            fixed_alpha=0.5,
-            use_surprise_gating=False
-        )
-        gated_fixed = fixed_gating(h_stm, h_ltm)
-        
-        # Verify fixed alpha output
-        assert verify_gating_output(gated_fixed, h_stm, h_ltm, 0.5)
-        
-        # Test with surprise-based alpha
-        surprise_score = 0.7
-        gated_surprise = gating(h_stm, h_ltm, surprise_score=surprise_score)
-        
-        # Verify surprise-based output
-        assert verify_gating_output(gated_surprise, h_stm, h_ltm, surprise_score)
-        
-        # Test shape preservation
         batch_size, seq_len, hidden_dim = h_stm.shape
-        assert gated_fixed.shape == (batch_size, seq_len, hidden_dim)
-        assert gated_surprise.shape == (batch_size, seq_len, hidden_dim)
-        
-        # Test value bounds
-        assert torch.all(gated_fixed >= torch.minimum(h_stm, h_ltm))
-        assert torch.all(gated_fixed <= torch.maximum(h_stm, h_ltm))
-        assert torch.all(gated_surprise >= torch.minimum(h_stm, h_ltm))
-        assert torch.all(gated_surprise <= torch.maximum(h_stm, h_ltm))
+
+        # Test scenarios
+        test_cases = [
+            {
+                'name': 'Fixed alpha (0.5)',
+                'module': MemoryGatingModule(
+                    hidden_dim=hidden_dim,
+                    fixed_alpha=0.5,
+                    use_surprise_gating=False
+                ),
+                'surprise': None,
+                'expected_alpha': 0.5
+            },
+            {
+                'name': 'High surprise',
+                'module': MemoryGatingModule(
+                    hidden_dim=hidden_dim,
+                    use_surprise_gating=True
+                ),
+                'surprise': 0.9,
+                'expected_alpha': 0.9
+            },
+            {
+                'name': 'Low surprise',
+                'module': MemoryGatingModule(
+                    hidden_dim=hidden_dim,
+                    use_surprise_gating=True
+                ),
+                'surprise': 0.1,
+                'expected_alpha': 0.1
+            },
+            {
+                'name': 'No surprise score',
+                'module': MemoryGatingModule(
+                    hidden_dim=hidden_dim,
+                    use_surprise_gating=True
+                ),
+                'surprise': None,
+                'expected_alpha': 0.5  # Default to equal weighting
+            },
+            {
+                'name': 'Edge case - zero states',
+                'module': MemoryGatingModule(
+                    hidden_dim=hidden_dim,
+                    use_surprise_gating=True
+                ),
+                'surprise': 0.5,
+                'expected_alpha': 0.5,
+                'custom_input': (torch.zeros_like(h_stm), torch.zeros_like(h_ltm))
+            }
+        ]
+
+        for case in test_cases:
+            print(f"\nTesting: {case['name']}")
+            
+            # Get input tensors
+            inputs = case.get('custom_input', (h_stm, h_ltm))
+            current, memory = inputs
+            
+            # Get gated output
+            gated = case['module'](current, memory, surprise_score=case['surprise'])
+            
+            # Basic checks
+            assert gated.shape == (batch_size, seq_len, hidden_dim), \
+                f"{case['name']}: Shape mismatch"
+            
+            # Verify gating behavior
+            assert verify_gating_output(gated, current, memory, case['expected_alpha']), \
+                f"{case['name']}: Incorrect gating"
+            
+            # Value bounds
+            assert torch.all(gated >= torch.minimum(current, memory)), \
+                f"{case['name']}: Values below minimum"
+            assert torch.all(gated <= torch.maximum(current, memory)), \
+                f"{case['name']}: Values above maximum"
+            
+            # Check numerical stability
+            assert torch.all(torch.isfinite(gated)), \
+                f"{case['name']}: Non-finite values detected"
+            
+            print(f"{case['name']}: All checks passed")
     
     def test_surprise_metric(self, setup_test_environment):
         """Test surprise metric calculation."""
