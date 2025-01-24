@@ -73,7 +73,29 @@ class MemoryGatingModule:
                 current_hidden: torch.Tensor,
                 memory_hidden: torch.Tensor,
                 surprise_score: Optional[float] = None) -> torch.Tensor:
-                
+        """Combine current and memory hidden states using gating.
+        
+        Args:
+            current_hidden: Hidden state from current context [batch, seq_len, hidden_dim]
+            memory_hidden: Retrieved memory hidden state [batch, seq_len, hidden_dim]
+            surprise_score: Optional score from surprise metric
+            
+        Returns:
+            Combined hidden state with same shape as inputs
+        """
+        # Ensure shapes match
+        assert current_hidden.shape == memory_hidden.shape, \
+            f"Shape mismatch: {current_hidden.shape} vs {memory_hidden.shape}"
+        
+        # Compute gating coefficient
+        alpha = self.compute_gating_coefficient(
+            current_hidden, memory_hidden, surprise_score)
+            
+        # Combine hidden states using weighted sum
+        combined = alpha * current_hidden + (1.0 - alpha) * memory_hidden
+        
+        return combined
+        
     def __call__(self,
                 current_hidden: torch.Tensor,
                 memory_hidden: torch.Tensor,
