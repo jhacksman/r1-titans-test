@@ -39,16 +39,31 @@ class TestMemoryIntegration:
     
     def test_vram_constraints(self, setup_test_environment):
         """Verify VRAM usage stays within 64GB limit."""
-        # PSEUDOCODE
-        """
-        model, wrapper, _ = setup_test_environment
+        from tests.vram_verification import VRAMMonitor
+        
+        # Initialize monitor
         monitor = VRAMMonitor(max_vram_gb=64.0)
         
+        # Check memory components
         stats = monitor.check_memory_components()
-        assert stats['total'] < 64 * (1024 ** 3)  # 64GB in bytes
-        assert stats['model_base'] <= 20 * (1024 ** 3)  # 20GB base model
-        """
-        pass
+        
+        # Verify total VRAM usage
+        assert stats['total'] < 64 * (1024 ** 3), \
+            f"Total VRAM {stats['total'] / (1024**3):.2f}GB exceeds 64GB limit"
+            
+        # Verify base model size
+        assert stats['model_base'] <= 20 * (1024 ** 3), \
+            f"Base model {stats['model_base'] / (1024**3):.2f}GB exceeds 20GB limit"
+            
+        # Verify sufficient VRAM available
+        assert stats['available'] >= 2 * (1024 ** 3), \
+            f"Insufficient VRAM available: {stats['available'] / (1024**3):.2f}GB"
+            
+        # Log memory usage breakdown
+        print("\nVRAM Usage Breakdown:")
+        for component, bytes_used in stats.items():
+            if component != 'available':
+                print(f"{component}: {bytes_used / (1024**3):.2f}GB")
     
     def test_no_context_expansion(self, setup_test_environment):
         """Verify no token context window expansion."""
