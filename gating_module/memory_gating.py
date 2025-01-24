@@ -4,12 +4,22 @@ import numpy as np
 from typing import Optional, Tuple
 
 class MemoryGatingModule:
-    """Memory as Gating (MAG) implementation for DeepSeek R1.
+    """Memory as Gating (MAG) implementation for DeepSeek R1 32B model.
     
     This module implements a lightweight gating mechanism that combines
     short-term memory (from attention) with retrieved long-term memory.
     No training is involved - the gating coefficient is either fixed or
     derived from a surprise-based heuristic.
+    
+    Design Philosophy:
+    - Maintain DeepSeek R1's 4-bit quantization compatibility
+    - No context window modifications
+    - VRAM-efficient implementation (part of 64GB budget)
+    - No training or fine-tuning required
+    
+    The gating mechanism uses a simple weighted combination:
+    output = α * current_hidden + (1-α) * memory_hidden
+    where α is determined by either a fixed value or surprise score.
     """
     
     def __init__(self, 
