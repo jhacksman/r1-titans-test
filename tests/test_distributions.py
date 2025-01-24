@@ -4,7 +4,10 @@ import numpy as np
 import pytest
 from memory_repository.memory_management import (
     to_probability_distribution,
-    batch_to_probability_distributions
+    batch_to_probability_distributions,
+    kl_divergence,
+    batch_kl_divergence,
+    surprise_score
 )
 
 def test_to_probability_distribution_basic():

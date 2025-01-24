@@ -13,6 +13,9 @@ import pytest
 import torch
 import numpy as np
 from typing import Dict, Any, Tuple
+from memory_repository.memory_management import surprise_score
+from memory_repository.memory_store import MemoryStore
+from gating_module.memory_gating import MemoryGatingModule
 
 class TestMemoryIntegration:
     """Test suite for memory integration components."""
@@ -20,14 +23,19 @@ class TestMemoryIntegration:
     @pytest.fixture
     def setup_test_environment(self):
         """Set up test environment with mock model and data."""
-        # PSEUDOCODE
-        """
-        model = setup_mock_r1_model()
-        wrapper = setup_memory_wrapper(model)
-        test_data = generate_test_data()
-        return model, wrapper, test_data
-        """
-        pass
+        # Create mock model with 4096 hidden dimension
+        hidden_dim = 4096
+        gating = MemoryGatingModule(hidden_dim=hidden_dim)
+        memory_store = MemoryStore(vector_dim=hidden_dim)
+        
+        # Generate test data
+        test_data = {
+            'hidden_state': np.random.randn(1, 32, hidden_dim),
+            'memory_state': np.random.randn(1, 32, hidden_dim),
+            'query_embedding': np.random.randn(hidden_dim)
+        }
+        
+        return None, gating, test_data
     
     def test_vram_constraints(self, setup_test_environment):
         """Verify VRAM usage stays within 64GB limit."""
@@ -103,33 +111,33 @@ class TestMemoryIntegration:
     
     def test_surprise_metric(self, setup_test_environment):
         """Test surprise metric calculation."""
-        _, wrapper, test_data = setup_test_environment
-        
-        # Create test tensors
-        current = torch.randn(1, 32, 4096)  # [batch, seq, hidden]
-        similar = current + 0.1 * torch.randn_like(current)  # Similar state
-        different = torch.randn_like(current)  # Different state
-        
+        _, _, test_data = setup_test_environment
+
+        # Create test states
+        current = test_data['hidden_state'].reshape(-1)  # Flatten for surprise calc
+        similar = current + 0.1 * np.random.randn(*current.shape)
+        different = np.random.randn(*current.shape)
+
         # Test with similar states
-        score_similar = wrapper.compute_surprise_score(current, similar)
+        score_similar = surprise_score(current, [similar], use_kl=True)
         assert 0.0 <= score_similar <= 1.0
         assert score_similar < 0.5  # Should be low surprise
-        
+
         # Test with different states
-        score_different = wrapper.compute_surprise_score(current, different)
+        score_different = surprise_score(current, [different], use_kl=True)
         assert 0.0 <= score_different <= 1.0
         assert score_different > score_similar  # Should be more surprising
-        
+
         # Test temperature effects
-        score_high_temp = wrapper.compute_surprise_score(
-            current, different, temperature=10.0)
-        score_low_temp = wrapper.compute_surprise_score(
-            current, different, temperature=0.1)
+        score_high_temp = surprise_score(
+            current, [different], temperature=10.0, use_kl=True)
+        score_low_temp = surprise_score(
+            current, [different], temperature=0.1, use_kl=True)
         assert score_high_temp < score_low_temp  # Higher temp = more uniform
         
-        # Test with zero tensors
-        zero_state = torch.zeros_like(current)
-        score_zero = wrapper.compute_surprise_score(zero_state, current)
+        # Test with zero states
+        zero_state = np.zeros_like(current)
+        score_zero = surprise_score(zero_state, [current], use_kl=True)
         assert 0.0 <= score_zero <= 1.0  # Should handle zeros gracefully
     
     def test_memory_management(self, setup_test_environment):

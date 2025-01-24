@@ -20,7 +20,7 @@ class MemoryStore:
     - VRAM-aware implementation
     """
     
-    def __init__(self, vector_dim: int, n_trees: int = 10):
+    def __init__(self, vector_dim: int, n_trees: int = 10, max_memory_gb: float = 32.0):
         """Initialize the memory store with Annoy index for fast retrieval.
         
         Args:

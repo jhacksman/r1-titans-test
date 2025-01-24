@@ -178,14 +178,17 @@ def surprise_score(current_state: np.ndarray,
     )
     
     # Convert KL values to surprise score
-    # Use softmax-like normalization to bound between 0 and 1
-    max_kl = np.max(kl_values)
-    if max_kl == 0:
+    # Use min KL value for similar states (lower KL = more similar)
+    min_kl = np.min(kl_values)
+    
+    # Special case for zero vector
+    if np.all(current_state == 0):
         return 0.0
         
-    # Normalize KL values to [0, 1] range
-    # Using a smooth sigmoid-like function: 1 / (1 + exp(-x))
-    surprise = 1.0 / (1.0 + np.exp(-max_kl))
+    # Scale KL value to [0, 1] range using temperature-aware sigmoid
+    # Higher temperature makes distribution more uniform, leading to lower surprise
+    scaled_kl = min_kl / temperature if temperature > 0 else min_kl
+    surprise = 1.0 / (1.0 + np.exp(5.0 * (0.5 - scaled_kl)))
     
     return surprise
 
