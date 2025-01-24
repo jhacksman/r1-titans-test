@@ -73,6 +73,12 @@ class MemoryGatingModule:
                 current_hidden: torch.Tensor,
                 memory_hidden: torch.Tensor,
                 surprise_score: Optional[float] = None) -> torch.Tensor:
+                
+    def __call__(self,
+                current_hidden: torch.Tensor,
+                memory_hidden: torch.Tensor,
+                surprise_score: Optional[float] = None) -> torch.Tensor:
+        return self.forward(current_hidden, memory_hidden, surprise_score)
         """Combine current and memory hidden states using gating.
         
         Args:
