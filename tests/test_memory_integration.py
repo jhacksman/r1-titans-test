@@ -161,6 +161,45 @@ class TestMemoryIntegration:
                 'surprise': 0.5,
                 'expected_alpha': 0.5,
                 'custom_input': (torch.zeros_like(h_stm), torch.zeros_like(h_ltm))
+            },
+            {
+                'name': 'Edge case - extreme values',
+                'module': MemoryGatingModule(
+                    hidden_dim=hidden_dim,
+                    use_surprise_gating=True
+                ),
+                'surprise': 0.5,
+                'expected_alpha': 0.5,
+                'custom_input': (
+                    torch.full_like(h_stm, 1e6),
+                    torch.full_like(h_ltm, -1e6)
+                )
+            },
+            {
+                'name': 'Edge case - NaN handling',
+                'module': MemoryGatingModule(
+                    hidden_dim=hidden_dim,
+                    use_surprise_gating=True
+                ),
+                'surprise': 0.5,
+                'expected_alpha': 0.5,
+                'custom_input': (
+                    torch.where(h_stm != 0, h_stm, torch.tensor(float('nan'))),
+                    h_ltm
+                )
+            },
+            {
+                'name': 'Edge case - mixed scales',
+                'module': MemoryGatingModule(
+                    hidden_dim=hidden_dim,
+                    use_surprise_gating=True
+                ),
+                'surprise': 0.5,
+                'expected_alpha': 0.5,
+                'custom_input': (
+                    h_stm * 1e6,
+                    h_ltm * 1e-6
+                )
             }
         ]
 
