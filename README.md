@@ -1,6 +1,6 @@
 # R1 Titans Memory Integration
 
-This repository implements Titans-inspired memory modules for the DeepSeek R1 model, enabling long-term and persistent memory capabilities while maintaining the model's existing reasoning abilities.
+This repository implements Titans-inspired memory modules for the DeepSeek R1 model (32B parameter version), enabling long-term and persistent memory capabilities while maintaining the model's existing reasoning abilities.
 
 ## Project Goals
 
@@ -20,14 +20,29 @@ Memory management includes:
 - Surprise metric for detecting significant new information
 - Forgetting mechanism to prevent unbounded memory growth
 
+## Implementation Details
+
+### Memory Components
+- Memory as Gating (MAG) implementation
+- External memory repository with Annoy-based retrieval
+- Surprise-based memory management
+- VRAM-optimized architecture
+
+### Technical Specifications
+- No context window modifications
+- No fine-tuning or training required
+- 4-bit quantized R1 (~20GB) compatibility
+- Comprehensive test suite
+
 ## Directory Structure
 
 ```
 .
 ├── memory_repository/     # External memory management
-├── gating_module/        # MAG/MAL implementation
+├── gating_module/        # MAG implementation
 ├── persistent_memory/    # Fixed knowledge embeddings
 ├── docs/                # Documentation
+├── tests/              # Test suite
 └── integrations/        # DeepSeek R1 integration code
 ```
 
@@ -43,4 +58,4 @@ Memory management includes:
 
 ## License
 
-[License information to be added]
+MIT License
