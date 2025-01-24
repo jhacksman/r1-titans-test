@@ -158,5 +158,32 @@ def test_surprise_score_fallback():
     score_original = surprise_score(state, [state], use_kl=False)
     assert 0 <= score_original <= 1
 
+def test_surprise_score_numerical_stability():
+    """Test numerical stability of surprise score calculation."""
+    # Test vectors
+    base = np.array([1.0, 2.0, 3.0])
+    similar = base + 0.1 * np.random.randn(3)
+    different = np.array([3.0, 2.0, 1.0])
+    
+    # Test scale invariance
+    score1 = surprise_score(base * 1e6, [similar * 1e6], use_kl=True)
+    score2 = surprise_score(base * 1e-6, [similar * 1e-6], use_kl=True)
+    assert np.abs(score1 - score2) < 0.1  # Should be roughly scale invariant
+    
+    # Test adaptive temperature scaling
+    score_high_temp = surprise_score(base, [different], temperature=10.0)
+    score_low_temp = surprise_score(base, [different], temperature=0.1)
+    assert score_high_temp < score_low_temp  # Higher temp = lower surprise
+    
+    # Test with extreme values
+    extreme = np.array([1e6, 2e6, 3e6])
+    score_extreme = surprise_score(extreme, [extreme * 1.1])
+    assert 0 < score_extreme < 1  # Should remain bounded
+    
+    # Test with very small differences
+    tiny_diff = base + 1e-10 * np.random.randn(3)
+    score_tiny = surprise_score(base, [tiny_diff])
+    assert score_tiny < 0.1  # Should detect tiny differences but not overreact
+
 if __name__ == "__main__":
     pytest.main([__file__])

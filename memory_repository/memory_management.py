@@ -177,7 +177,7 @@ def surprise_score(current_state: np.ndarray,
         ref_distributions
     )
     
-    # Convert KL values to surprise score
+    # Convert KL values to surprise score with improved numerical stability
     # Use min KL value for similar states (lower KL = more similar)
     min_kl = np.min(kl_values)
     
@@ -185,12 +185,24 @@ def surprise_score(current_state: np.ndarray,
     if np.all(current_state == 0):
         return 0.0
         
+    # Adaptive temperature scaling based on KL magnitude
+    # This prevents saturation for very large or very small KL values
+    scale_factor = 1.0 / (1.0 + np.log1p(min_kl))  # Adaptive scaling
+    
     # Scale KL value to [0, 1] range using temperature-aware sigmoid
     # Higher temperature makes distribution more uniform, leading to lower surprise
-    scaled_kl = min_kl / temperature if temperature > 0 else min_kl
-    surprise = 1.0 / (1.0 + np.exp(5.0 * (0.5 - scaled_kl)))
+    scaled_kl = min_kl * scale_factor / temperature if temperature > 0 else min_kl * scale_factor
     
-    return surprise
+    # Use numerically stable sigmoid implementation
+    if scaled_kl >= 0:
+        surprise = 1.0 / (1.0 + np.exp(-5.0 * (scaled_kl - 0.5)))
+    else:
+        exp_x = np.exp(5.0 * (scaled_kl - 0.5))
+        surprise = exp_x / (1.0 + exp_x)
+    
+    # Ensure output is in valid range with smooth clamping
+    eps = 1e-6  # Small constant to avoid exact 0 or 1
+    return float(np.clip(surprise, eps, 1.0 - eps))
 
 def forget_stale_entries(memory_store: MemoryStore, 
                         age_threshold: float = 3600,
