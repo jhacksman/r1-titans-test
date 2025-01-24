@@ -43,7 +43,7 @@ class MemoryGatingModule:
     def compute_gating_coefficient(self, 
                                  current_hidden: torch.Tensor,
                                  memory_hidden: torch.Tensor,
-                                 surprise_score: Optional[float] = None) -> float:
+                                 surprise_score: Optional[float] = None) -> torch.Tensor:
         """Compute the gating coefficient (alpha) for combining hidden states.
         
         Args:
@@ -52,19 +52,22 @@ class MemoryGatingModule:
             surprise_score: Optional pre-computed surprise score
             
         Returns:
-            float: Gating coefficient between 0 and 1
+            torch.Tensor: Gating coefficient between 0 and 1, broadcastable to input shape
         """
         if self.fixed_alpha is not None:
-            return self.fixed_alpha
+            alpha = torch.full_like(current_hidden[:, :, 0], self.fixed_alpha)
+            return alpha.unsqueeze(-1)
             
         if not self.use_surprise_gating or surprise_score is None:
             # Default to equal weighting if no surprise score
-            return 0.5
+            alpha = torch.full_like(current_hidden[:, :, 0], 0.5)
+            return alpha.unsqueeze(-1)
             
         # Convert surprise score to gating coefficient
         # Higher surprise -> more weight on current hidden state
-        alpha = min(max(surprise_score, 0.0), 1.0)
-        return alpha
+        alpha = torch.full_like(current_hidden[:, :, 0], 
+                              min(max(surprise_score, 0.0), 1.0))
+        return alpha.unsqueeze(-1)
         
     def forward(self,
                 current_hidden: torch.Tensor,

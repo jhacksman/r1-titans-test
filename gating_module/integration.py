@@ -1,4 +1,5 @@
 import torch
+import time
 from typing import Optional, Dict, Any
 from .memory_gating import MemoryGatingModule
 from ..memory_repository.memory_store import MemoryStore
@@ -55,48 +56,54 @@ class DeepSeekMemoryWrapper:
             **kwargs
         )
         
-        # Get current hidden states
-        hidden_states = outputs.hidden_states[-1]  # Last layer
+        # Get current hidden states (last layer)
+        hidden_states = outputs.hidden_states[-1]  # [batch, seq_len, hidden_dim]
+        device = hidden_states.device
         
-        # Convert to numpy for memory operations
+        # Convert to numpy for memory operations (minimize VRAM usage)
         hidden_np = hidden_states.detach().cpu().numpy()
         
-        # Compute surprise score
-        current_surprise = surprise_score(hidden_np)
+        # Compute surprise score using flattened representation
+        flat_hidden = hidden_np.reshape(-1, hidden_np.shape[-1])
+        current_surprise = surprise_score(flat_hidden)
         
         # Retrieve relevant memories
-        batch_size, seq_len, _ = hidden_states.shape
-        memory_shape = self.gating.get_memory_shape(batch_size, seq_len)
+        batch_size, seq_len, hidden_dim = hidden_states.shape
+        memory_shape = (batch_size, seq_len, hidden_dim)
         
-        # Get memory embeddings
-        memory_keys, _ = self.memory_store.retrieve(
-            hidden_np.reshape(-1, hidden_np.shape[-1]),
-            k=1
-        )
+        # Get memory embeddings (k=1 for efficiency)
+        memory_keys, distances = self.memory_store.retrieve(flat_hidden, k=1)
         
-        if memory_keys:
+        # Initialize memory tensor on CPU first
+        if memory_keys and len(memory_keys) > 0:
             memory_data = self.memory_store.get_memory(memory_keys[0])
             if memory_data:
                 memory_hidden = torch.from_numpy(
                     memory_data['embedding']
-                ).reshape(memory_shape).to(hidden_states.device)
+                ).reshape(memory_shape)
             else:
-                memory_hidden = torch.zeros_like(hidden_states)
+                memory_hidden = torch.zeros(memory_shape)
         else:
-            memory_hidden = torch.zeros_like(hidden_states)
+            memory_hidden = torch.zeros(memory_shape)
+            
+        # Move to GPU only when ready to gate
+        memory_hidden = memory_hidden.to(device)
         
-        # Apply gating
+        # Apply gating mechanism
         gated_hidden = self.gating.forward(
             hidden_states,
             memory_hidden,
             surprise_score=current_surprise
         )
         
-        # Store current hidden state if surprising enough
+        # Update memory if sufficiently surprising
         if current_surprise > 0.5:  # Configurable threshold
             self.memory_store.add_memory(
-                hidden_np.reshape(-1, hidden_np.shape[-1]),
-                metadata={'surprise_score': current_surprise}
+                flat_hidden,
+                metadata={
+                    'surprise_score': float(current_surprise),
+                    'timestamp': time.time()
+                }
             )
         
         # Update output hidden states

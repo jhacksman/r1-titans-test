@@ -91,23 +91,40 @@ class TestMemoryIntegration:
     
     def test_gating_mechanism(self, setup_test_environment):
         """Test memory gating functionality."""
-        # PSEUDOCODE
-        """
-        _, wrapper, test_data = setup_test_environment
+        _, gating, test_data = setup_test_environment
         
-        h_stm = test_data['hidden_state']
-        h_ltm = test_data['memory_state']
+        # Convert numpy test data to torch tensors
+        h_stm = torch.from_numpy(test_data['hidden_state']).float()
+        h_ltm = torch.from_numpy(test_data['memory_state']).float()
         
         # Test with fixed alpha
-        gated = wrapper.gating(h_stm, h_ltm, alpha=0.5)
-        assert verify_gating_output(gated, h_stm, h_ltm, 0.5)
+        fixed_gating = MemoryGatingModule(
+            hidden_dim=h_stm.shape[-1],
+            fixed_alpha=0.5,
+            use_surprise_gating=False
+        )
+        gated_fixed = fixed_gating(h_stm, h_ltm)
+        
+        # Verify fixed alpha output
+        assert verify_gating_output(gated_fixed, h_stm, h_ltm, 0.5)
         
         # Test with surprise-based alpha
         surprise_score = 0.7
-        gated = wrapper.gating(h_stm, h_ltm, surprise_score=surprise_score)
-        assert verify_gating_output(gated, h_stm, h_ltm, surprise_score)
-        """
-        pass
+        gated_surprise = gating(h_stm, h_ltm, surprise_score=surprise_score)
+        
+        # Verify surprise-based output
+        assert verify_gating_output(gated_surprise, h_stm, h_ltm, surprise_score)
+        
+        # Test shape preservation
+        batch_size, seq_len, hidden_dim = h_stm.shape
+        assert gated_fixed.shape == (batch_size, seq_len, hidden_dim)
+        assert gated_surprise.shape == (batch_size, seq_len, hidden_dim)
+        
+        # Test value bounds
+        assert torch.all(gated_fixed >= torch.minimum(h_stm, h_ltm))
+        assert torch.all(gated_fixed <= torch.maximum(h_stm, h_ltm))
+        assert torch.all(gated_surprise >= torch.minimum(h_stm, h_ltm))
+        assert torch.all(gated_surprise <= torch.maximum(h_stm, h_ltm))
     
     def test_surprise_metric(self, setup_test_environment):
         """Test surprise metric calculation."""
@@ -207,13 +224,28 @@ def verify_gating_output(output: torch.Tensor,
                         h_stm: torch.Tensor,
                         h_ltm: torch.Tensor,
                         alpha: float) -> bool:
-    """Verify gating mechanism output."""
-    # PSEUDOCODE
+    """Verify gating mechanism output.
+    
+    Args:
+        output: Actual output from gating mechanism
+        h_stm: Short-term memory hidden state
+        h_ltm: Long-term memory hidden state
+        alpha: Gating coefficient
+        
+    Returns:
+        bool: True if output matches expected gating behavior
     """
-    expected = alpha * h_stm + (1 - alpha) * h_ltm
-    return torch.allclose(output, expected, rtol=1e-5)
-    """
-    pass
+    # Create broadcastable alpha tensor
+    alpha_tensor = torch.full_like(h_stm[:, :, 0:1], alpha)
+    
+    # Compute expected output
+    expected = alpha_tensor * h_stm + (1 - alpha_tensor) * h_ltm
+    
+    # Verify shape and values
+    if output.shape != expected.shape:
+        return False
+        
+    return torch.allclose(output, expected, rtol=1e-5, atol=1e-8)
 
 def verify_memory_freshness(memory_store: Any,
                           max_age: float = 3600) -> bool:
