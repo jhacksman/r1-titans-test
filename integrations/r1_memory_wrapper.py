@@ -145,16 +145,41 @@ def initialize_memory_gating(**config):
     pass
 
 def compute_surprise_score(current: torch.Tensor,
-                         memory: torch.Tensor) -> float:
-    """Compute surprise score for memory update decision."""
-    # PSEUDOCODE
+                         memory: torch.Tensor,
+                         temperature: float = 1.0) -> float:
+    """Compute surprise score for memory update decision using KL divergence.
+    
+    Args:
+        current: Current hidden state tensor
+        memory: Memory hidden state tensor
+        temperature: Temperature for softmax normalization
+        
+    Returns:
+        float: Surprise score in [0, 1] range
+        
+    Implementation:
+    1. Convert tensors to numpy arrays
+    2. Use KL divergence-based surprise metric
+    3. Handle edge cases and numerical stability
     """
-    return calculate_surprise_metric(
-        current.detach().cpu().numpy(),
-        memory.detach().cpu().numpy()
+    # Convert to numpy with proper detachment
+    current_np = current.detach().cpu().numpy()
+    memory_np = memory.detach().cpu().numpy()
+    
+    # Ensure proper shape for surprise calculation
+    if current_np.ndim > 2:
+        current_np = current_np.reshape(-1, current_np.shape[-1])
+    if memory_np.ndim > 2:
+        memory_np = memory_np.reshape(-1, memory_np.shape[-1])
+    
+    # Compute surprise score using KL divergence
+    from memory_repository.memory_management import surprise_score
+    return surprise_score(
+        current_np,
+        [memory_np],  # Wrap in list for compatibility
+        temperature=temperature,
+        use_kl=True  # Explicitly use KL divergence
     )
-    """
-    pass
 
 def should_update_memory(surprise_score: float,
                         threshold: float = 0.5) -> bool:

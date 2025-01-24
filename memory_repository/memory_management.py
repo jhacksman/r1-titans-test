@@ -1,51 +1,193 @@
 import numpy as np
 import time
-from typing import List, Optional, Dict, Any
+from typing import List, Optional, Dict, Any, Tuple, Union
 from annoy import AnnoyIndex
 from .memory_store import MemoryStore
 
-def surprise_score(current_state: np.ndarray, reference_states: Optional[List[np.ndarray]] = None) -> float:
-    """Calculate surprise score for current hidden state.
+def to_probability_distribution(hidden_state: np.ndarray, 
+                             temperature: float = 1.0,
+                             eps: float = 1e-9) -> np.ndarray:
+    """Convert hidden state to probability distribution using softmax.
+    
+    Args:
+        hidden_state: Input hidden state vector
+        temperature: Softmax temperature (higher = more uniform)
+        eps: Small constant for numerical stability
+        
+    Returns:
+        Probability distribution over hidden state dimensions
+        
+    Implementation:
+    1. Scale and shift for numerical stability
+    2. Apply softmax with temperature
+    3. Ensure valid probability distribution
+    """
+    # Handle edge case of zero vector
+    if np.all(hidden_state == 0):
+        return np.ones_like(hidden_state) / hidden_state.shape[0]
+    
+    # Scale inputs for numerical stability
+    x = hidden_state / temperature
+    x = x - np.max(x)  # Shift for numerical stability
+    
+    # Compute softmax
+    exp_x = np.exp(x)
+    probs = exp_x / (np.sum(exp_x) + eps)
+    
+    # Ensure valid probability distribution
+    probs = np.maximum(probs, eps)  # Avoid exact zeros
+    probs = probs / np.sum(probs)  # Renormalize
+    
+    return probs
+
+def batch_to_probability_distributions(hidden_states: np.ndarray,
+                                    temperature: float = 1.0,
+                                    eps: float = 1e-9) -> np.ndarray:
+    """Convert batch of hidden states to probability distributions.
+    
+    Args:
+        hidden_states: Batch of hidden states [batch_size, hidden_dim]
+        temperature: Softmax temperature
+        eps: Small constant for numerical stability
+        
+    Returns:
+        Batch of probability distributions
+    """
+    if hidden_states.ndim == 1:
+        return to_probability_distribution(hidden_states, temperature, eps)
+    
+    # Process batch dimension
+    return np.stack([
+        to_probability_distribution(state, temperature, eps)
+        for state in hidden_states
+    ])
+
+def kl_divergence(p: np.ndarray, q: np.ndarray, eps: float = 1e-9) -> float:
+    """Compute KL divergence between two probability distributions.
+    
+    Implementation uses a numerically stable formula:
+    KL(P||Q) = sum(P[i] * log((P[i] + eps)/(Q[i] + eps)))
+    
+    Args:
+        p: First probability distribution
+        q: Second probability distribution (reference)
+        eps: Small constant for numerical stability
+        
+    Returns:
+        KL divergence value
+    """
+    # Ensure valid probability distributions
+    p = np.maximum(p, eps)
+    q = np.maximum(q, eps)
+    
+    # Normalize if needed
+    if not np.isclose(np.sum(p), 1.0):
+        p = p / np.sum(p)
+    if not np.isclose(np.sum(q), 1.0):
+        q = q / np.sum(q)
+    
+    # Compute KL divergence in a numerically stable way
+    ratio = (p + eps) / (q + eps)
+    log_ratio = np.log(ratio + eps)
+    
+    return np.sum(p * log_ratio)
+
+def batch_kl_divergence(p_batch: np.ndarray, 
+                       q_batch: np.ndarray,
+                       eps: float = 1e-9) -> np.ndarray:
+    """Compute KL divergence for batches of probability distributions.
+    
+    Args:
+        p_batch: Batch of first probability distributions [batch_size, dim]
+        q_batch: Batch of second probability distributions [batch_size, dim]
+        eps: Small constant for numerical stability
+        
+    Returns:
+        Array of KL divergence values [batch_size]
+    """
+    if p_batch.ndim == 1:
+        return kl_divergence(p_batch, q_batch, eps)
+        
+    return np.array([
+        kl_divergence(p, q, eps)
+        for p, q in zip(p_batch, q_batch)
+    ])
+
+def surprise_score(current_state: np.ndarray, 
+                         reference_states: Optional[List[np.ndarray]] = None,
+                         temperature: float = 1.0,
+                         use_kl: bool = True) -> float:
+    """Calculate surprise score for current hidden state using KL divergence.
     
     Uses a combination of:
-    1. L2 norm of the hidden state (basic activity measure)
-    2. If reference states provided, minimum cosine distance to previous states
+    1. KL divergence from reference states (if available)
+    2. Fallback to L2 norm for basic activity measure
     
     Args:
         current_state: Current hidden state vector
         reference_states: Optional list of previous hidden states for comparison
+        temperature: Temperature for softmax normalization
+        use_kl: Whether to use KL divergence (if False, uses L2/cosine)
         
     Returns:
-        float: Surprise score (higher = more surprising)
+        float: Surprise score in [0, 1] (higher = more surprising)
     """
-    # Basic activity measure
-    activity_score = np.linalg.norm(current_state)
-    
-    if reference_states and len(reference_states) > 0:
-        # Calculate cosine similarities with reference states
+    if not use_kl:
+        # Fallback to original L2/cosine method
+        activity_score = np.linalg.norm(current_state)
+        
+        if not reference_states or len(reference_states) == 0:
+            return min(activity_score, 1.0)
+            
+        # Calculate cosine similarities
         current_norm = np.linalg.norm(current_state)
         if current_norm == 0:
             return 0.0
             
         current_normalized = current_state / current_norm
-        
         max_similarity = -1.0
+        
         for ref_state in reference_states:
             ref_norm = np.linalg.norm(ref_state)
             if ref_norm == 0:
                 continue
-                
             ref_normalized = ref_state / ref_norm
             similarity = np.dot(current_normalized, ref_normalized)
             max_similarity = max(max_similarity, similarity)
-        
-        # Convert similarity to distance (1 = most surprising, 0 = least surprising)
+            
         novelty_score = 1.0 - max(0.0, max_similarity)
-        
-        # Combine activity and novelty scores
-        return 0.5 * (activity_score + novelty_score)
+        return 0.5 * (min(activity_score, 1.0) + novelty_score)
     
-    return activity_score
+    # Convert current state to probability distribution
+    current_dist = to_probability_distribution(current_state, temperature=temperature)
+    
+    if not reference_states or len(reference_states) == 0:
+        # No reference states - use normalized L2 as fallback
+        return min(np.linalg.norm(current_state), 1.0)
+    
+    # Convert reference states to distributions
+    ref_distributions = batch_to_probability_distributions(
+        np.stack(reference_states),
+        temperature=temperature
+    )
+    
+    # Compute KL divergence with each reference state
+    kl_values = batch_kl_divergence(
+        np.tile(current_dist, (len(ref_distributions), 1)),
+        ref_distributions
+    )
+    
+    # Convert KL values to surprise score
+    # Use softmax-like normalization to bound between 0 and 1
+    max_kl = np.max(kl_values)
+    if max_kl == 0:
+        return 0.0
+        
+    # Normalize KL values to [0, 1] range
+    # Using a smooth sigmoid-like function: 1 / (1 + exp(-x))
+    surprise = 1.0 / (1.0 + np.exp(-max_kl))
+    
+    return surprise
 
 def forget_stale_entries(memory_store: MemoryStore, 
                         age_threshold: float = 3600,

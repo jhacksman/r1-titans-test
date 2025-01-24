@@ -103,17 +103,34 @@ class TestMemoryIntegration:
     
     def test_surprise_metric(self, setup_test_environment):
         """Test surprise metric calculation."""
-        # PSEUDOCODE
-        """
         _, wrapper, test_data = setup_test_environment
         
-        state = test_data['hidden_state']
-        memory = test_data['memory_state']
+        # Create test tensors
+        current = torch.randn(1, 32, 4096)  # [batch, seq, hidden]
+        similar = current + 0.1 * torch.randn_like(current)  # Similar state
+        different = torch.randn_like(current)  # Different state
         
-        score = wrapper.compute_surprise_score(state, memory)
-        assert 0.0 <= score <= 1.0
-        """
-        pass
+        # Test with similar states
+        score_similar = wrapper.compute_surprise_score(current, similar)
+        assert 0.0 <= score_similar <= 1.0
+        assert score_similar < 0.5  # Should be low surprise
+        
+        # Test with different states
+        score_different = wrapper.compute_surprise_score(current, different)
+        assert 0.0 <= score_different <= 1.0
+        assert score_different > score_similar  # Should be more surprising
+        
+        # Test temperature effects
+        score_high_temp = wrapper.compute_surprise_score(
+            current, different, temperature=10.0)
+        score_low_temp = wrapper.compute_surprise_score(
+            current, different, temperature=0.1)
+        assert score_high_temp < score_low_temp  # Higher temp = more uniform
+        
+        # Test with zero tensors
+        zero_state = torch.zeros_like(current)
+        score_zero = wrapper.compute_surprise_score(zero_state, current)
+        assert 0.0 <= score_zero <= 1.0  # Should handle zeros gracefully
     
     def test_memory_management(self, setup_test_environment):
         """Test memory management (forgetting mechanism)."""
