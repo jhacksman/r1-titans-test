@@ -1,6 +1,7 @@
 import numpy as np
 import time
-from typing import List, Optional
+from typing import List, Optional, Dict, Any
+from annoy import AnnoyIndex
 from .memory_store import MemoryStore
 
 def surprise_score(current_state: np.ndarray, reference_states: Optional[List[np.ndarray]] = None) -> float:
@@ -48,17 +49,20 @@ def surprise_score(current_state: np.ndarray, reference_states: Optional[List[np
 
 def forget_stale_entries(memory_store: MemoryStore, 
                         age_threshold: float = 3600,
-                        max_memories: int = 10000) -> int:
+                        max_memories: int = 10000,
+                        min_surprise_score: float = 0.3) -> int:
     """Remove old or excess memories from the store.
     
-    Uses two criteria:
+    Uses three criteria in order:
     1. Time-based pruning: Remove entries older than age_threshold
-    2. Capacity-based pruning: If still over max_memories, remove oldest entries
+    2. Surprise-based pruning: Remove entries with low surprise scores
+    3. Capacity-based pruning: If still over max_memories, remove oldest entries
     
     Args:
         memory_store: The MemoryStore instance to prune
         age_threshold: Maximum age in seconds before memory is considered stale
         max_memories: Maximum number of memories to keep
+        min_surprise_score: Minimum surprise score to keep (if available)
         
     Returns:
         int: Number of memories removed
@@ -72,7 +76,19 @@ def forget_stale_entries(memory_store: MemoryStore,
         if timestamp and (current_time - timestamp) > age_threshold:
             to_remove.append(key)
     
-    # Second pass: If still over capacity, remove oldest entries
+    # Second pass: Remove entries with low surprise scores
+    remaining_entries = [
+        (k, memory_store.storage[k]) 
+        for k in memory_store.storage.keys() 
+        if k not in to_remove
+    ]
+    
+    for key, data in remaining_entries:
+        surprise_score = data.get('metadata', {}).get('surprise_score', 1.0)
+        if surprise_score < min_surprise_score:
+            to_remove.append(key)
+    
+    # Third pass: If still over capacity, remove oldest entries
     if len(memory_store.storage) - len(to_remove) > max_memories:
         # Sort remaining entries by timestamp
         entries = [(k, memory_store.get_timestamp(k)) 
@@ -85,18 +101,22 @@ def forget_stale_entries(memory_store: MemoryStore,
         to_remove.extend([k for k, _ in entries[:excess]])
     
     # Remove all identified entries
+    removed_count = 0
     for key in to_remove:
-        del memory_store.storage[key]
+        try:
+            del memory_store.storage[key]
+            removed_count += 1
+        except KeyError:
+            continue  # Skip if already removed
     
     # If we removed any entries, rebuild the Annoy index
-    if to_remove:
+    if removed_count > 0:
         # Create new index with remaining items
-        old_index = memory_store.index
-        memory_store.index = memory_store.index.__class__(memory_store.vector_dim)
+        memory_store.index = AnnoyIndex(memory_store.vector_dim, 'angular')
         
         for key, data in memory_store.storage.items():
             memory_store.index.add_item(data['index'], data['embedding'])
         
         memory_store.index.build(memory_store.n_trees)
     
-    return len(to_remove)
+    return removed_count

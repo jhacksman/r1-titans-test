@@ -61,16 +61,23 @@ class TestMemoryIntegration:
         """
         _, wrapper, test_data = setup_test_environment
         
-        # Store test memories
+        # Store test memories with different surprise scores
         test_embeddings = generate_test_embeddings()
-        for emb in test_embeddings:
-            wrapper.ltm.add_memory(emb)
+        for i, emb in enumerate(test_embeddings):
+            surprise_score = (i + 1) / len(test_embeddings)  # Increasing surprise
+            wrapper.ltm.add_memory(
+                emb,
+                metadata={'surprise_score': surprise_score}
+            )
         
         # Test retrieval
         query = test_data['query_embedding']
         retrieved = wrapper.ltm.retrieve_relevant(query)
         
+        # Verify retrieval accuracy and metadata
         assert verify_retrieval_accuracy(retrieved, test_embeddings)
+        for mem in retrieved:
+            assert 'surprise_score' in mem.metadata
         """
         pass
     
