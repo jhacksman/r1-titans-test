@@ -4,11 +4,25 @@ from typing import Dict, Any, Optional, Tuple
 from annoy import AnnoyIndex
 
 class MemoryStore:
+    """Memory store implementation using Annoy for efficient similarity search.
+    
+    This class provides the core functionality for storing and retrieving memory
+    embeddings, optimized for the DeepSeek R1 32B model's memory requirements.
+    It uses the Annoy library for approximate nearest neighbor search, which
+    provides a good balance between search speed and memory usage.
+    
+    Key Features:
+    - Efficient similarity search with Annoy
+    - Metadata storage for each memory
+    - Timestamp tracking for memory management
+    - VRAM-aware implementation
+    """
+    
     def __init__(self, vector_dim: int, n_trees: int = 10):
         """Initialize the memory store with Annoy index for fast retrieval.
         
         Args:
-            vector_dim: Dimension of the embedding vectors
+            vector_dim: Dimension of the embedding vectors (matches R1's hidden dim)
             n_trees: Number of trees for Annoy index (more trees = better accuracy but slower build)
         """
         self.vector_dim = vector_dim
